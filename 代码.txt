@@ -1,0 +1,202 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed May 23 16:46:01 2018
+
+@author: DELL
+"""
+
+from operator import itemgetter
+import math
+import pandas as pd
+import numpy as np
+import random
+
+def loadfile():
+    #users_Name=['user_id','gender','age','work','zip']
+    ratings_Name=['user_id','movie_id','ratings','timeStamp']
+    #movie_Name=['movie_id','title','classs']
+    #users=pd.read_table('users.dat',sep='::',header=None,names=users_Name)
+    ratings=pd.read_table('ratings.dat',sep='::',header=None,names=ratings_Name)
+    #movies=pd.read_table('movies.dat',sep='::',header=None,names=movie_Name)
+
+    d1=np.array(ratings[['user_id','movie_id']])
+    #再转成列表
+    listdata=d1.tolist()
+    data={}
+    for i in range(len(listdata)):
+        #获取列表中的第一个元素 用户Id
+        userid=listdata[i][0]
+        movieid=listdata[i][1]
+        #判断用户id是否存在
+        if userid not in data.keys():
+            #设置字典值为列表，允许有重复
+            # 如果没重复，可以写为data.setdefault(userid,{})[movieid]=1
+            # data.setdefault(userid,[]).append(movieid)
+            data.setdefault(userid, []).append(movieid)
+        else:
+            data[userid].append(movieid)
+    # for user,movie in data.items():
+    #     print('用户ID：',user,'       产品列表：',movie,'\n')
+    # with open('data.txt', 'wb') as f:
+    #    pickle.dump(data,f)
+    return data
+
+
+
+
+
+
+
+def SplitData(data,seed):#切割数据集，其中数据集中的一半用来训练，一半用来预测
+    test={}
+    train={}
+    random.seed(seed)
+    for user,items in data.items():
+        train[user]=[]
+        test[user]=[]
+        for item in items:
+            if random.randint(0,10)==2:
+                  test[user].append(item)
+            else:      
+                  train[user].append(item)
+    return train,test
+
+
+def UserSimilarity(train):#用倒排表计算用户之间的相关性
+    item_users=dict()
+    for u,items in train.items():
+        for i in items:
+            if i not in item_users:
+                item_users[i]=set()
+            item_users[i].add(u)
+    C=dict()
+    N=dict()
+    for i,users in item_users.items():
+        for u in users:
+            N[u]=N.get(u, 0) + 1
+            for v in users:
+                if u==v:
+                    continue
+                C[u]=C.get(u,{})
+                C[u][v]=C[u].get(v,0)+1
+                #C[u][v]=C[u].get(v,0)+1/math.log(1+len(users))
+    W=dict()
+    for u,related_users in C.items():
+        W[u]={}
+        for v,cuv in related_users.items():
+           W[u][v]=cuv/math.sqrt(N[u]*N[v])
+    return W
+
+
+
+def Recommendation(user,train,W,K,N):#利用用户之间的相似度给用户推荐物品
+    rank=dict()
+    interacted_items=train[user]
+    m=sorted(W[user].items(),key=itemgetter(1),reverse=True)[0:K]
+    for v,wuv in m:
+        for i in train[v]:
+            if i in interacted_items:
+                continue
+            rank[i]=rank.get(i,0)+wuv*1
+    rank=sorted(rank.items(),key=itemgetter(1),reverse=True)
+    return rank[:N]
+
+
+
+def ItemSimilarity(train):#计算物品之间的相似度
+    C=dict()
+    N=dict()
+    for u,items in train.items():
+        for i in items:
+          N[i]=N.get(i,0)+1
+          for j in items:
+              if i==j:
+                  continue
+              C[i]=C.get(i,{})
+              C[i][j]=C[i].get(j,0)+1
+              #C[i][j]=C[i].get(j,0)+1/math.log(1+len(items)*1.0)
+    W=dict()
+    for i,related_items in C.items():
+        W[i]={}
+        for j,cij in related_items.items():
+            W[i][j]=cij/math.sqrt(N[i]*N[j])
+    return W
+
+
+
+def Recommend(user,train,W,K,N):#利用物品相似度给用户推荐物品
+    rank=dict()
+    ru=train[user]
+    for i in ru:
+        for j,wj in sorted(W[i].items(),key=itemgetter(1),reverse=True)[0:K]:
+            if j in ru:
+                continue
+            rank[j]=rank.get(j,0)+wj*1
+    rank=sorted(rank.items(),key=itemgetter(1),reverse=True)
+    return rank[:N]
+
+
+
+def Recall(train,test,W,K,N):#W是用户相关性的矩阵，K是选择相关性最高的K个用户作为推荐的指标，N是推荐的物品数量
+    hit=0
+    all=0
+    for user in train.keys():
+        tu=test[user]
+        rank=Recommend(user,train,W,K,N)
+        for item,pui in rank:
+            if item in tu:
+                hit+=1
+        all+=len(tu)
+    return hit/(all*1.0)
+
+
+def Precision(train,test,W,K,N):#同理，这里计算的是准确度
+    hit=0
+    all=0
+    for user in train.keys():
+        tu=test[user]
+        rank=Recommend(user,train,W,K,N)
+        for  item,pui in rank:
+            if item in tu:
+                hit+=1
+        all+=N
+    return hit/(all*1.0)
+
+def Coverage(train,test,W,K,N):#这里计算的是覆盖率
+    recommend_items=set()
+    all_items=set()
+    for user in train.keys():
+        for item in train[user]:
+            all_items.add(item)
+        rank=Recommend(user,train,W,K,N)
+        for item,pui in rank:
+            recommend_items.add(item)
+    return len(recommend_items)/(len(all_items)*1.0)
+
+def Popularity(train,test,W,K,N):#这里计算的是流行度
+    item_popularity=dict()
+    for user,items in train.items():
+        for item in items:
+            if item not in item_popularity:
+                item_popularity[item]=0
+            else:
+                item_popularity[item]+=1
+    ret=0
+    n=0
+    for user in train.keys():
+        rank=Recommend(user,train,W,K,N)
+        for item,pui in rank:
+            ret+=math.log(1+item_popularity[item])
+            n+=1
+    ret/=n*1.0
+    return ret
+
+
+
+
+
+
+
+
+
+
